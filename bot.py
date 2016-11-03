@@ -1,10 +1,65 @@
 import asyncio
+import json
 import discord
 from discord.ext import commands
 
-ban_user = []
-replya = {}
-pic_replya ={}
+try:
+    with open('ban_user.json', 'r') as f:
+        try:
+            ban_user = json.load(f)
+        except ValueError:
+            ban_user = []
+except IOError:
+    ban_user = []
+try:
+    with open('superadm.json', 'r') as f:
+        try:
+            superadm = json.load(f)
+        except ValueError:
+            superadm = ['your_id']
+except IOError:
+    superadm = ['your_id']
+try:
+    with open('adm_user.json', 'r') as f:
+        try:
+            adm_user = json.load(f)
+        except ValueError:
+            adm_user = []
+except IOError:
+    adm_user = []
+try:
+    with open('replya.json', 'r') as f:
+        try:
+            replya = json.load(f)
+        except ValueError:
+            replya = {}
+except IOError:
+    replya = {}
+try:
+    with open('pic_replya.json', 'r') as f:
+        try:
+            pic_replya = json.load(f)
+        except ValueError:
+            pic_replya = {}
+except IOError:
+    pic_replya = {}
+try:
+    with open('bgm_list.json', 'r') as f:
+        try:
+            bgm_list = json.load(f)
+        except ValueError:
+            bgm_list = {}
+except IOError:
+    bgm_list = {}
+
+bgm_player = {}
+typing = []
+
+with open('avatar.png', 'rb') as f:
+    avatar = f.read()
+
+with open('player_avatar.png', 'rb') as f:
+    player_avatar = f.read()
 
 if not discord.opus.is_loaded():
     # the 'opus' library here is opus.dll on windows
@@ -95,24 +150,31 @@ class Music:
             except:
                 pass
 
+    async def player_say(self, message, content):
+        await self.bot.change_nickname(message.server.me, 'Player')
+        await self.bot.edit_profile(avatar=player_avatar)
+        await self.bot.send_message(message.channel, content)
+        await self.bot.change_nickname(message.server.me, None)
+        await self.bot.edit_profile(avatar=avatar)
+
     @commands.command(pass_context=True, no_pm=True)
     async def join(self, ctx, *, channel : discord.Channel):
         """Joins a voice channel."""
         try:
             await self.create_voice_client(channel)
         except discord.ClientException:
-            await self.bot.say('Already in a voice channel...')
+            await self.player_say(ctx.message, 'Already in a voice channel...')
         except discord.InvalidArgument:
-            await self.bot.say('This is not a voice channel...')
+            await self.player_say(ctx.message, 'This is not a voice channel...')
         else:
-            await self.bot.say('Ready to play audio in ' + channel.name)
+            await self.player_say(ctx.message, 'Ready to play audio in ' + channel.name)
 
     @commands.command(pass_context=True, no_pm=True)
     async def summon(self, ctx):
         """Summons the bot to join your voice channel."""
         summoned_channel = ctx.message.author.voice_channel
         if summoned_channel is None:
-            await self.bot.say('You are not in a voice channel.')
+            await self.player_say(ctx.message, 'You are not in a voice channel.')
             return False
 
         state = self.get_voice_state(ctx.message.server)
@@ -154,9 +216,13 @@ class Music:
             fmt = 'An error occurred while processing this request: ```py\n{}: {}\n```'
             await self.bot.send_message(ctx.message.channel, fmt.format(type(e).__name__, e))
         else:
-            player.volume = 0.6
+            player.volume = 0.2
             entry = VoiceEntry(ctx.message, player)
-            await self.bot.say('Enqueued ' + str(entry))
+            await self.bot.change_nickname(ctx.message.server.me, 'Player')
+            await self.bot.edit_profile(avatar=player_avatar)
+            await self.player_say(ctx.message, 'Enqueued ' + str(entry))
+            await self.bot.change_nickname(ctx.message.server.me, None)
+            await self.bot.edit_profile(avatar=avatar)
             await state.songs.put(entry)
 
     @commands.command(pass_context=True, no_pm=True)
@@ -167,7 +233,7 @@ class Music:
         if state.is_playing():
             player = state.player
             player.volume = value / 100
-            await self.bot.say('Set the volume to {:.0%}'.format(player.volume))
+            await self.player_say(ctx.message, 'Set the volume to {:.0%}'.format(player.volume))
 
     @commands.command(pass_context=True, no_pm=True)
     async def pause(self, ctx):
@@ -194,6 +260,10 @@ class Music:
         server = ctx.message.server
         state = self.get_voice_state(server)
 
+        if ctx.message.author.id not in adm_user:
+            await bot.say('Sorry, {0.name} can\'t stop playing.'.format(ctx.message.author))
+            return
+
         if state.is_playing():
             player = state.player
             player.stop()
@@ -202,6 +272,8 @@ class Music:
             state.audio_player.cancel()
             del self.voice_states[server.id]
             await state.voice.disconnect()
+            voice = self.bot.voice_client_in(server.id)
+            voice.disconnect()
         except:
             pass
 
@@ -214,23 +286,26 @@ class Music:
 
         state = self.get_voice_state(ctx.message.server)
         if not state.is_playing():
-            await self.bot.say('Not playing any music right now...')
+            await self.player_say(ctx.message, 'Not playing any music right now...')
             return
 
         voter = ctx.message.author
         if voter == state.current.requester:
-            await self.bot.say('Requester requested skipping song...')
+            await self.player_say(ctx.message, 'Requester requested skipping song...')
+            state.skip()
+        elif voter.id in adm_user:
+            await self.player_say(ctx.message, 'Skipping song...')
             state.skip()
         elif voter.id not in state.skip_votes:
             state.skip_votes.add(voter.id)
             total_votes = len(state.skip_votes)
             if total_votes >= 3:
-                await self.bot.say('Skip vote passed, skipping song...')
+                await self.player_say(ctx.message, 'Skip vote passed, skipping song...')
                 state.skip()
             else:
-                await self.bot.say('Skip vote added, currently at [{}/3]'.format(total_votes))
+                await self.player_say(ctx.message, 'Skip vote added, currently at [{}/3]'.format(total_votes))
         else:
-            await self.bot.say('You have already voted to skip this song.')
+            await self.player_say(ctx.message, 'You have already voted to skip this song.')
 
     @commands.command(pass_context=True, no_pm=True)
     async def playing(self, ctx):
@@ -238,24 +313,43 @@ class Music:
 
         state = self.get_voice_state(ctx.message.server)
         if state.current is None:
-            await self.bot.say('Not playing anything.')
+            await self.player_say(ctx.message, 'Not playing anything.')
         else:
             skip_count = len(state.skip_votes)
-            await self.bot.say('Now playing {} [skips: {}/3]'.format(state.current, skip_count))
+            await self.player_say(ctx.message, 'Now playing {} [skips: {}/3]'.format(state.current, skip_count))
 
-bot = commands.Bot(command_prefix=commands.when_mentioned_or('!'), description='A playlist example for discord.py')
-bot.add_cog(Music(bot))
+bot = commands.Bot(command_prefix='!', description='a simple discord bot')
+music = Music(bot)
+game_i = discord.Game()
+bot.add_cog(music)
+silent = False
 
 @bot.event
 async def on_ready():
     print('Logged in as:\n{0} (ID: {0.id})'.format(bot.user))
-
 @bot.event
 async def on_message(message):
+    global silent
     # we do not want the bot to reply to itself
     if message.author == bot.user:
         return
-            
+
+    typing.clear()
+    if message.content.startswith(bot.user.mention):
+        if message.author.id not in adm_user:
+            await bot.send_file(message.channel, 'avatar.png')
+            return
+        if '閉嘴' in message.content:
+            silent = True
+            await bot.send_message(message.channel, '\_(:з」∠)_')
+        elif '說話' in message.content:
+            silent = False
+            await bot.send_message(message.channel, '>_>')
+        else:
+            await bot.send_message(message.channel, '¯\_(ツ)_/¯')
+        return
+    if silent:
+        return
     if message.content.startswith('!'):
         if message.author.id in ban_user:
             await bot.send_message(message.channel, '{0.author.mention} 不要'.format(message))
@@ -265,12 +359,50 @@ async def on_message(message):
             if key in message.content:
                 msg = '{0.author.mention} '+replya[key]
                 await bot.send_message(message.channel, msg.format(message))
+                return
 
         for key in pic_replya.keys():
             if key in message.content:
                 await bot.send_file(message.channel, 'pic/'+pic_replya[key])
+                return
+
+        for key in bgm_list.keys():
+            if key in message.content:
+                if message.author.id in ban_user:
+                    await bot.send_message(message.channel, '{0.author.mention} 閉嘴'.format(message))
+                    return
+                state = music.get_voice_state(message.server)
+                member = message.server.get_member(key)
+                if member.voice_channel is None:
+                    await bot.send_message(message.channel, '{0.name} is not in a voice channel.'.format(member))
+                    return
+                if state.voice is None:
+                    state.voice = await bot.join_voice_channel(member.voice_channel)
+                else:
+                    await state.voice.move_to(member.voice_channel)
+                if state.is_playing():
+                    player = state.player
+                    player.pause()
+                if bgm_player.get(message.server.id) is not None:
+                    if bgm_player[message.server.id].is_playing():
+                        bgm_player[message.server.id].stop()
+                bgm_player[message.server.id] = await state.voice.create_ytdl_player(bgm_list[key])
+                bgm_player[message.server.id].start()
+                return
 
     await bot.process_commands(message)
+
+@bot.event
+async def on_typing(channel, user, when):
+    if silent:
+        return
+    if user == bot.user:
+        return
+    if typing.count(user.id) == 3:
+        typing.clear()
+        await bot.send_message(channel, '{0.mention} 請說'.format(user))
+    else:
+        typing.append(user.id)
 
 @bot.command()
 async def add_reply(keyword : str, reply : str):
@@ -281,6 +413,8 @@ async def add_reply(keyword : str, reply : str):
     else:
         replya.update({keyword:reply})
         await bot.say('Keyword '+keyword+' is added')
+    with open('replya.json', 'w') as f:
+        json.dump(replya, f)
 
 @bot.command()
 async def del_reply(keyword : str):
@@ -290,6 +424,8 @@ async def del_reply(keyword : str):
         await bot.say('Keyword '+keyword+' is deleted')
     else:
         await bot.say('No keyword is named '+keyword)
+    with open('replya.json', 'w') as f:
+        json.dump(replya, f)
 
 @bot.command()
 async def add_picrep(keyword : str, reply : str):
@@ -300,6 +436,8 @@ async def add_picrep(keyword : str, reply : str):
     else:
         pic_replya.update({keyword:reply})
         await bot.say('Keyword '+keyword+' is added')
+    with open('pic_replya.json', 'w') as f:
+        json.dump(pic_replya, f)
 
 @bot.command()
 async def del_picrep(keyword : str):
@@ -309,13 +447,44 @@ async def del_picrep(keyword : str):
         await bot.say('Keyword '+keyword+' is deleted')
     else:
         await bot.say('No keyword is named '+keyword)
+    with open('pic_replya.json', 'w') as f:
+        json.dump(pic_replya, f)
+
+@bot.command(pass_context=True)
+async def add_bgm(ctx, member : discord.Member, bgm : str):
+    """add bgm"""
+    if ctx.message.author.id not in adm_user:
+        await bot.say('Sorry, {0.name} can\'t add bgm.'.format(ctx.message.author))
+        return
+    if member.id in bgm_list.keys():
+        bgm_list[member.id] = bgm
+        await bot.say('{0.name}\'s bgm is changed'.format(member))
+    else:
+        bgm_list.update({member.id:bgm})
+        await bot.say('{0.name}\'s bgm is added'.format(member))
+    with open('bgm_list.json', 'w') as f:
+        json.dump(bgm_list, f)
+
+@bot.command(pass_context=True)
+async def del_bgm(ctx, member : discord.Member):
+    """delete bgm"""
+    if ctx.message.author.id not in adm_user:
+        await bot.say('Sorry, {0.name} can\'t delete bgm.'.format(ctx.message.author))
+        return
+    if member.id in bgm_list.keys():
+        del bgm_list[member.id]
+        await bot.say('{0.name}\'s bgm is deleted'.format(member))
+    else:
+        await bot.say('No bgm is for {0.name}'.format(member))
+    with open('bgm_list.json', 'w') as f:
+        json.dump(bgm_list, f)
 
 @bot.command(pass_context=True, hidden=True)
 async def ban(ctx, member : discord.Member):
     """ban user"""
 
-    if ctx.message.author.id != 'admin id':
-        await bot.say('Sorry, {0} can\'t ban user.'.format(ctx.message.author))
+    if ctx.message.author.id not in adm_user:
+        await bot.say('Sorry, {0.name} can\'t ban user.'.format(ctx.message.author))
         return
     
     if member.id in ban_user:
@@ -323,13 +492,15 @@ async def ban(ctx, member : discord.Member):
     else:
         ban_user.append(member.id)
         await bot.say('{0.name} has been banned!'.format(member))
+    with open('ban_user.json', 'w') as f:
+        json.dump(ban_user, f)
 
 @bot.command(pass_context=True, hidden=True)
 async def unban(ctx, member : discord.Member):
     """unban user"""
 
-    if ctx.message.author.id != 'admin id':
-        await bot.say('Sorry, {0} can\'t unban user.'.format(ctx.message.author))
+    if ctx.message.author.id not in adm_user:
+        await bot.say('Sorry, {0.name} can\'t unban user.'.format(ctx.message.author))
         return
 
     if member.id in ban_user:
@@ -337,5 +508,70 @@ async def unban(ctx, member : discord.Member):
         await bot.say('{0.name} has been unbanned!'.format(member))
     else:
         await bot.say('{0.name} isn\'t banned!'.format(member))
+    with open('ban_user.json', 'w') as f:
+        json.dump(ban_user, f)
+
+@bot.command(pass_context=True, hidden=True)
+async def adm(ctx, member : discord.Member):
+    """make user admin"""
+
+    if ctx.message.author.id not in superadm:
+        await bot.say('Sorry, {0.name} can\'t make user admin.'.format(ctx.message.author))
+        return
+    
+    if member.id in adm_user:
+        await bot.say('{0.name} is already admin!'.format(member))
+    else:
+        adm_user.append(member.id)
+        await bot.say('{0.name} is admin!'.format(member))
+    with open('adm_user.json', 'w') as f:
+        json.dump(adm_user, f)
+
+@bot.command(pass_context=True, hidden=True)
+async def unadm(ctx, member : discord.Member):
+    """make user not admin"""
+
+    if ctx.message.author.id not in superadm:
+        await bot.say('Sorry, {0.name} can\'t make user not admin.'.format(ctx.message.author))
+        return
+
+    if member.id in adm_user:
+        adm_user.remove(member.id)
+        await bot.say('{0.name} isn\'t admin now!'.format(member))
+    else:
+        await bot.say('{0.name} is already not admin!'.format(member))
+    with open('adm_user.json', 'w') as f:
+        json.dump(adm_user, f)
+
+@bot.command(pass_context=True, hidden=True)
+async def game(ctx, *, name : str = None):
+    """update game status"""
+
+    if ctx.message.author.id not in superadm:
+        await bot.say('Sorry, {0.name} can\'t use this.'.format(ctx.message.author))
+        return
+
+    if name is None:
+        await bot.change_presence()
+    else:
+        game_i.name=name
+        await bot.change_presence(game=game_i)
+
+@bot.command(pass_context=True, hidden=True)
+async def twitch(ctx, *, url : str = None):
+    """update game status"""
+
+    if ctx.message.author.id not in superadm:
+        await bot.say('Sorry, {0.name} can\'t use this.'.format(ctx.message.author))
+        return
+
+    if url is None:
+        game_i.url=None
+        game_i.type=0
+        await bot.change_presence(game=game_i)
+    else:
+        game_i.url=url
+        game_i.type=1
+        await bot.change_presence(game=game_i)
 
 bot.run('bot_token')
